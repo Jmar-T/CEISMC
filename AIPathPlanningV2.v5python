@@ -175,14 +175,12 @@ rc_auto_loop_thread_controller_1 = Thread(rc_auto_loop_function_controller_1)
 
 #endregion VEXcode Generated Robot Configuration
 
-###___Global Variables___###
-ai_objects = None
-my_map = None
-start = 0
-end = 8
-distances = None
-paths = None
-FINAL_MOVE_DATA = {
+# =====================================
+# MAP DATA - ONLY EDIT THIS SECTION
+# =====================================
+# (Start, End) : (Distance, Heading)
+# Note: The code will automatically creeate the return paths (End, Start)
+RAW_MAP_DATA = {
     (0, 1): (7, 0),
     (1, 2): (3, 90),
     (1, 3): (8, 270),
@@ -196,125 +194,143 @@ FINAL_MOVE_DATA = {
     (9, 11): (4, 90),
     (11, 1): (11, 180)
 }
-###___Global Variables___###
+DRIVE_SCALE = 10 # Adjust this to change how far 1 unit is in real life
+NUM_NODES = 12
+START_NODE = 0
+END_NODE = 8
 
+# ==============================
+# GLOBAL STATE (Automatic)
+# ==============================
+my_map = [[] for _ in range(NUM_NODES)]
+movement_lookup = {}
+planned_paths = None
 
+def build_map():
+    """Converts the simple RAW_MAP_DATA into
+    a formart Dijkstra's and the Drivetrain understand."""
+    global my_map, movement_lookup
+    #Reset map in case we re-scan
+    my_map = [[] for _ in range(NUM_NODES)]
+    movement_lookup = {}
 
-#___OnPressedFuncitons__#
+    for (u,v), (dist, heading) in RAW_MAP_DATA.items():
+        # Add to Dijkstra Graph (Both ways)
+        my_map[u].append((v, dist))
+        my_map[v].append((u, dist))
+
+        #Add to Movement Lookup
+        movement_lookup[(u,v)] = (dist, heading)
+        # Flip the angle 180 degrees for the return trip
+        movement_lookup[(v,u)] = (dist, (heading + 180) % 360)
+# =======================
+# BUTTON FUNCTIONS
+# =======================
+
 def run_on_A_pressed():
-    ("Button A Pressed, taking picture of April Tag")
-    global ai_objects
-    global my_map
+    """Step 1: Scan AprilTag and Load the Map Data."""
+    print("Button A: Loading Map Data...")
+    
     ai_objects = ai_vision_15.take_snapshot(AiVision.ALL_TAGS)
+
+    #We assume Tag 1 triggers our office map load
+    if ai_vision_15.tags[0].exists and ai_vision_15.tags[0].id == 1:
+        build_map()
+        print("Map successfully loaded and built!")
+    else:
+        print("No valid Map Tag found.")
     if not ai_objects[0].exists:
         print("Tag Not Found -> No Data")
-        my_map = None
-    elif ai_objects[0].id == 1:
-        print("Found Tag Setting Map Data")
-         
-        my_map = [[(1, 7)], [(0, 7), (2, 3), (3, 8), (11, 11)],
-                  [(1, 3)], [(1, 8), (4, 7), (5, 2)], [(3, 7)],
-                  [(3, 2), (6, 5)], [(5, 5), (7, 3), (8, 6)], 
-                  [(6, 3)], [(6, 6), (9, 9)], [(8, 9), (10, 3), (11, 4)],
-                  [(9, 3)], [(9, 4), (1, 11)]]
+        
 def dijkstra(graph, start_node):
     """
     Compute Dijkstra's algorithm
     Finds the quickest way to get from a starting 
-    node to every other location.
+    node to every other location using a sorted list.
     
     :param graph: A list where each index is a 'current_node" and contains its nieghboring connections.
     :param start_node: The 'current_node' we are starting our journey from.
     :return: A list of shortest distances and the actual paths to take.
     """
 
-
     #1 Setup:
     #Assume every current_node has a "infinite" distance between them, until we find a path.
     total_distances = [float("inf")] * len(graph)
     total_distances[start_node] = 0
-    
-    visited_nodes = set()
     travel_paths = [[] for _ in range(len(graph))]
+    visited_nodes = set()
+
 
     #2 The Priority Queue (The 'To-Vsit' List)
     # We store tuples of (current_total_distance, current_node, previous_node)
-    # The heapq keeps the smallest distance at the very top.
-    unvisited_queue = [(0, start_node, None)]
-    def push(x):
-        unvisited_queue.append(x)
-        unvisited_queue.sort()
-
-    def pop():
-        return unvisited_queue.pop(0)
+    # Will remain a sorted list
+    queue = [(0, start_node, None)]
     
-    while unvisited_queue:
-        #Pick the node with the shortest distanced discovered so far
-        current_distance, current_node, parent_node = pop()
+    while queue:
+        # Sort by distance (first item in tuple) then take the smallest
+        queue.sort()
+        curr_dist, curr_node, parent = queue.pop(0)
         
         #if we've already visited this node, then we have
         #already found a shorter path to it, so we skip it.
-        if current_node in visited_nodes:
+        if curr_node in visited_nodes:
             continue
 
         #Mark this node as 'visited' and update the distance
-        visited_nodes.add(current_node)
-        total_distances[current_node] = current_distance
+        visited_nodes.add(curr_node)
+        total_distances[curr_node] = curr_dist
         #Build the path list (e.g., [0, 2, 3] meants start at 0, go to 2, then to 3)
-        if parent_node is None:
-            travel_paths[current_node] = [start_node]
+        if parent is None:
+            travel_paths[curr_node] = [start_node]
         else:
-            travel_paths[current_node] = travel_paths[parent_node] + [current_node]
+            travel_paths[curr_node] = travel_paths[parent] + [curr_node]
 
         #3 Check Neighbors:
         # Look at all nodes connected to the current one
-        for neighbor, weight in graph[current_node]:
+        for neighbor, weight in graph[curr_node]:
             if neighbor not in visited_nodes:
                 #Calculate: "Distance to current_node" + "Distance to neighbor"
-                new_distance = current_distance + weight 
-                push((new_distance, neighbor, current_node))
-        
+                new_distance = curr_dist + weight 
+                queue.append((new_distance, neighbor, curr_node))
+          
     return total_distances, travel_paths
 def run_on_B_pressed():
-    global my_map
-    global start
-    global distances
-    global paths
-    
-    if my_map == None:
-        print("Can't run on an empty map")
+    """Step 2: Plan the Path."""
+    global planned_paths
+    if not any(my_map): # Check if map is empty
+        print("Error: Load map first (Press A)")
         return
-    distances,paths = dijkstra(my_map,start)
-    #print("just finished dijkstras")
     
-    #print("--- Trip Results starting from Node {} ---", start)
-    for node_id in range(len(distances)):
-        # Convert numbers to strings so we can join them with arrows
-        path_as_strings = [str(n) for n in paths[node_id]]
-        path_format = " -> ".join(path_as_strings)
-        #print("To Node %s: Route: [%s] | Total Cost: %s" % (node_id, path_format, distances[node_id]))
+    print("Button B: Calculating shortest path...")
+    _, planned_paths = dijkstra(my_map, START_NODE)
+    
+    my_path = planned_paths[END_NODE]
+    print("Path Found: " + " -> ".join([str(n) for n in my_path]))
+    
 def run_on_Y_pressed():
-    #move robot
-    global distances, paths, FINAL_MOVE_DATA, end
+    """Step 3: Execute Movement."""
+    if not planned_paths:
+        print("Error: Plan path first (Press B)")
+        return
     
+    path = planned_paths[END_NODE]
     drivetrain.set_heading(0, DEGREES)
-    if paths != None:
-        path =paths[end]
+    
+    print("Executing Drive Sequence....")
     
     for i in range(len(path)-1):
-        curr = path[i]
-        nextl = path[i+1]
-        move_distance, move_direction = (FINAL_MOVE_DATA[(curr, nextl)])
-        
-        drivetrain.turn_to_heading(move_direction)
-        drivetrain.drive_for(FORWARD, move_distance* 8, INCHES,wait=True)
-    
+        u,v = path[i], path[i+1]
+        dist, heading = movement_lookup[(u,v)]
 
-    
+        # print("Moving %i -> %i: ")
+        
+        drivetrain.turn_to_heading(heading, DEGREES, wait=True)
+        drivetrain.drive_for(FORWARD, dist * DRIVE_SCALE* 8, INCHES,wait=True)
+
+    print("Arrived at Destination!")
 
 def when_started1():
     #___Global Variables___
-    global myVariable
     pass
 controller_1.buttonA.pressed(run_on_A_pressed)
 controller_1.buttonB.pressed(run_on_B_pressed)
