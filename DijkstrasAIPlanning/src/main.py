@@ -234,7 +234,7 @@ def run_on_A_pressed():
     ai_objects = ai_vision_15.take_snapshot(AiVision.ALL_TAGS)
 
     #We assume Tag 1 triggers our office map load
-    if ai_vision_15.tags[0].exists and ai_vision_15.tags[0].id == 1:
+    if ai_objects[0].exists and ai_objects[0].id == 1:
         build_map()
         print("Map successfully loaded and built!")
     else:
@@ -325,7 +325,7 @@ def run_on_Y_pressed():
         # print("Moving %i -> %i: ")
         
         drivetrain.turn_to_heading(heading, DEGREES, wait=True)
-        drivetrain.drive_for(FORWARD, dist * DRIVE_SCALE* 8, INCHES,wait=True)
+        drivetrain.drive_for(FORWARD, dist * DRIVE_SCALE, INCHES,wait=True)
 
     print("Arrived at Destination!")
 
